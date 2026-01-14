@@ -30,7 +30,6 @@
 #include <boost/range/adaptor/reversed.hpp>
 #include <boost/variant.hpp>
 #include <fstream>
-#include <list>
 
 #include <string>
 using std::string;
@@ -584,56 +583,6 @@ static void check_generic_parameters(po::variables_map const &vm) {
     options::maybe_throw("tile-y can't be negative!", ERR_NEGATIVETILEY);
   }
 
-  // Z no funciona el laser :p
-  /*
-  if (!vm.count("zsafe")) {
-    options::maybe_throw("Error: Safety height not specified.", ERR_NOZSAFE);
-  }
-
-  //---------------------------------------------------------------------------
-  //Check for zchange parameter parameter:
-
-  if (!vm.count("zchange")) {
-    options::maybe_throw("Error: Tool changing height not specified.",
-  ERR_NOZCHANGE);
-  }
-  */
-
-  //---------------------------------------------------------------------------
-  // Check for autoleveller parameters
-  // Sin Z no hay probe que realizar
-
-  /*
-  if (vm["al-front"].as<bool>() || vm["al-back"].as<bool>()) {
-    if (!vm.count("software")) {
-      options::maybe_throw(
-          "Error: unspecified or unsupported software, please specify a "
-          "supported software (linuxcnc, mach3, mach4 or custom).",
-          ERR_NOSOFTWARE);
-    }
-
-    if (!vm.count("al-x")) {
-      options::maybe_throw("Error: autoleveller probe width x not specified.",
-                           ERR_NOALX);
-    } else if (vm["al-x"].as<Length>().asInch(unit) <= 0) {
-      options::maybe_throw("Error: al-x < 0!", ERR_NEGATIVEALX);
-    }
-
-    if (!vm.count("al-y")) {
-      options::maybe_throw("Error: autoleveller probe width y not specified.",
-                           ERR_NOALY);
-    } else if (vm["al-y"].as<Length>().asInch(unit) <= 0) {
-      options::maybe_throw("Error: al-y < 0!", ERR_NEGATIVEALY);
-    }
-
-    if (!vm.count("al-probefeed")) {
-      options::maybe_throw("Error: autoleveller probe feed rate not specified.",
-                           ERR_NOALPROBEFEED);
-    } else if (vm["al-probefeed"].as<Velocity>().asInchPerMinute(unit) <= 0) {
-      options::maybe_throw("Error: al-probefeed < 0!", ERR_NEGATIVEPROBEFEED);
-    }
-  }
-  */
   if (vm["mill-feed-direction"].as<MillFeedDirection::MillFeedDirection>() !=
           MillFeedDirection::ANY &&
       vm["tsp-2opt"].as<bool>()) {
@@ -655,14 +604,6 @@ static void check_laser_parameters(po::variables_map const &vm) {
 
   if (vm.count("front") || vm.count("back")) {
 
-    // Tampoco tenemos zwork...
-    // Porque no hay Z
-    if (!vm.count("zwork")) {
-      options::maybe_throw("Error: --zwork not specified.", ERR_NOZWORK);
-    } else if (vm["zwork"].as<Length>().asDouble() > 0) {
-      cerr << "Warning: Engraving depth (--zwork) is greater than zero!\n";
-    }
-
     if (!vm["vectorial"].as<bool>()) {
       options::maybe_throw("Error: --vectorial is mandatory",
                            ERR_INVALIDPARAMETER);
@@ -683,16 +624,6 @@ static void check_laser_parameters(po::variables_map const &vm) {
       options::maybe_throw("Error: Milling speed [rpm] not specified.",
                            ERR_NOMILLSPEED);
     }
-
-    // required parameters present. check for validity.
-    /*
-    if (vm["zsafe"].as<Length>().asInch(unit) <=
-        vm["zwork"].as<Length>().asInch(unit)) {
-      options::maybe_throw(
-          "Error: The safety height --zsafe is lower than the milling "
-          "height --zwork. Are you sure this is correct?",
-          ERR_ZSAFELOWERZWORK);
-    }*/
 
     if (vm["mill-feed"].as<Velocity>().asDouble() <= 0) {
       options::maybe_throw(
@@ -720,76 +651,6 @@ static void check_laser_parameters(po::variables_map const &vm) {
   }
 }
 
-/******************************************************************************/
-/*
- */
-/******************************************************************************/
-/*
-static void check_drilling_parameters(po::variables_map const &vm) {
-
-  double unit; // factor for imperial/metric conversion
-
-  unit = vm["metric"].as<bool>() ? (1. / 25.4) : 1;
-
-  // only check the parameters if a drill file is given
-  if (vm.count("drill")) {
-
-    if (!vm.count("zdrill")) {
-      options::maybe_throw("Error: Drilling depth (--zdrill) not specified.\n",
-                           ERR_NOZDRILL);
-    }
-
-    if (vm["zsafe"].as<Length>().asInch(unit) <=
-        vm["zdrill"].as<Length>().asInch(unit)) {
-      options::maybe_throw(
-          "Error: The safety height --zsafe is lower than the drilling "
-          "height --zdrill!\n",
-          ERR_ZSAFELOWERZDRILL);
-    }
-
-    if (!vm.count("zchange")) {
-      options::maybe_throw(
-          "Error: Drill bit changing height (--zchange) not specified.",
-          ERR_NOZCHANGE);
-    } else if (!vm["zchange-absolute"].as<bool>() &&
-               vm["zchange"].as<Length>().asInch(unit) <=
-                   vm["zdrill"].as<Length>().asInch(unit)) {
-      options::maybe_throw(
-          "Error: The safety height --zsafe is lower than the tool "
-          "change height --zchange!",
-          ERR_ZSAFELOWERZCHANGE);
-    }
-
-    if (!vm.count("drill-feed")) {
-      options::maybe_throw(
-          "Error:: Drilling feed (--drill-feed) not specified.",
-          ERR_NODRILLFEED);
-    } else if (vm["drill-feed"].as<Velocity>().asInchPerMinute(unit) <= 0) {
-      options::maybe_throw("Error: The drilling feed --drill-feed is <= 0.",
-                           ERR_NEGATIVEDRILLFEED);
-    }
-
-    if (!vm.count("drill-speed")) {
-      options::maybe_throw(
-          "Error: Drilling spindle RPM (--drill-speed) not specified.",
-          ERR_NODRILLSPEED);
-    } else if (vm["drill-speed"].as<Rpm>().asRpm(1) <
-               0) { // no need to support both directions?
-      options::maybe_throw("Error: --drill-speed < 0.", ERR_NEGATIVEDRILLSPEED);
-    }
-
-    if (vm.count("drill-front")) {
-      cerr << "drill-front is deprecated, use drill-side.\n";
-
-      if (!vm["drill-side"].defaulted()) {
-        options::maybe_throw(
-            "You can't specify both drill-front and drill-side!",
-            ERR_BOTHDRILLFRONTSIDE);
-      }
-    }
-  }
-}
-*/
 /******************************************************************************/
 /*
  */
@@ -898,7 +759,6 @@ void options::check_parameters() {
     check_generic_parameters(vm);
     check_laser_parameters(vm);
     check_cutting_parameters(vm);
-    // check_drilling_parameters(vm);
   } catch (std::runtime_error &re) {
     maybe_throw("Error: Invalid parameter. :-(", ERR_INVALIDPARAMETER);
   }

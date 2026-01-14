@@ -1,6 +1,6 @@
 /*
  * This file is part of pcb2gcode.
- * 
+ *
  * Copyright (C) 2009, 2010 Patrick Birnzain <pbirnzain@users.sourceforge.net>
  * Copyright (C) 2015 Nicola Corna <nicola@corna.info>
  *
@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- * 
+ *
  * pcb2gcode is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with pcb2gcode.  If not, see <http://www.gnu.org/licenses/>.
  */
@@ -23,6 +23,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <string>
 #include <vector>
 
 /******************************************************************************/
@@ -30,7 +31,7 @@
  */
 /******************************************************************************/
 class Mill {
- public:
+public:
   virtual ~Mill() {}
 
   double feed;
@@ -52,8 +53,8 @@ class Mill {
 /*
  */
 /******************************************************************************/
-class RoutingMill: public Mill {
- public:
+class RoutingMill : public Mill {
+public:
   double optimise;
   bool eulerian_paths;
   size_t path_finding_limit;
@@ -61,15 +62,15 @@ class RoutingMill: public Mill {
   double g0_horizontal_speed;
   double backtrack;
   double stepsize;
-  double offset;  // Stay away from the traces by this amount.
+  double offset; // Stay away from the traces by this amount.
 };
 
 /******************************************************************************/
 /*
  */
 /******************************************************************************/
-class Isolator: public RoutingMill {
- public:
+class Isolator : public RoutingMill {
+public:
   // Each element is the tool diameter and the overlap width for that tool, both
   // in inches.
   std::vector<std::pair<double, double>> tool_diameters_and_overlap_widths;
@@ -83,8 +84,8 @@ class Isolator: public RoutingMill {
 /*
  */
 /******************************************************************************/
-class Cutter: public RoutingMill {
- public:
+class Cutter : public RoutingMill {
+public:
   double tool_diameter;
   unsigned int bridges_num;
   double bridges_height;
@@ -95,8 +96,6 @@ class Cutter: public RoutingMill {
 /*
  */
 /******************************************************************************/
-class Driller: public Mill
-{
-};
+class Driller : public Mill {};
 
 #endif // MILL_H

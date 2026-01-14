@@ -1,2 +1,0 @@
-geos_helpers.o: ../geos_helpers.cpp /usr/include/stdc-predef.h
-/usr/include/stdc-predef.h:
