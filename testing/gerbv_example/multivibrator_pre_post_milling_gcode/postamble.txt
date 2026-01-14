@@ -1,3 +1,0 @@
-postamble line1
-postamble line2
-postamble line3
