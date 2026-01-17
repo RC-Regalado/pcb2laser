@@ -81,3 +81,4 @@ testing/gerbv_example/*/*.svg
 /*.gbr.png
 
 build/*
+.cache/*

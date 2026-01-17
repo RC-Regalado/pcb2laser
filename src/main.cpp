@@ -54,9 +54,9 @@ void do_pcb2gcode(int argc, const char *argv[]) {
 
   if (vm.count("version")) { // return version and quit
     cout << PACKAGE_VERSION << endl;
-    cout << "Git commit: " << GIT_VERSION << endl;
+    //  cout << "Git commit: " << GIT_VERSION << endl;
     cout << "Boost: " << BOOST_VERSION << endl;
-    cout << "Gerbv: " << GERBV_VERSION << endl;
+//    cout << "Gerbv: " << GERBV_VERSION << endl;
 #ifdef GEOS_VERSION
     cout << "Geos: " << GEOS_VERSION << endl;
 #else
