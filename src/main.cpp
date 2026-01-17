@@ -1,0 +1,342 @@
+/*
+ * This file is part of pcb2gcode.
+ *
+ * Copyright (C) 2009, 2010 Patrick Birnzain <pbirnzain@users.sourceforge.net>
+ * and others Copyright (C) 2010 Bernhard Kubicek <kubicek@gmx.at> Copyright (C)
+ * 2013 Erik Schuster <erik@muenchen-ist-toll.de> Copyright (C) 2014, 2015
+ * Nicola Corna <nicola@corna.info>
+ *
+ * pcb2gcode is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * pcb2gcode is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with pcb2gcode.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <sstream>
+
+#include <vector>
+using std::vector;
+
+using std::cerr;
+using std::cout;
+using std::endl;
+using std::flush;
+using std::fstream;
+using std::make_shared;
+using std::shared_ptr;
+
+#include <string>
+using std::string;
+
+#include "board.hpp"
+#include "gerberimporter.hpp"
+#include "ngc_exporter.hpp"
+#include "options.hpp"
+
+#include <boost/algorithm/string.hpp>
+#include <boost/version.hpp>
+
+void do_pcb2gcode(int argc, const char *argv[]) {
+  options::parse(argc, argv); // parse the command line parameters
+
+  po::variables_map &vm = options::get_vm(); // get the cli parameters
+
+  if (vm.count("version")) { // return version and quit
+    cout << PACKAGE_VERSION << endl;
+    //  cout << "Git commit: " << GIT_VERSION << endl;
+    cout << "Boost: " << BOOST_VERSION << endl;
+//    cout << "Gerbv: " << GERBV_VERSION << endl;
+#ifdef GEOS_VERSION
+    cout << "Geos: " << GEOS_VERSION << endl;
+#else
+    cout << "Geos: Not installed" << endl;
+#endif
+    return;
+  }
+
+  if (vm.count("help")) { // return help and quit
+    cout << options::help();
+    return;
+  }
+
+  options::check_parameters(); // check the cli parameters
+
+  //---------------------------------------------------------------------------
+  // deal with metric / imperial units for input parameters:
+
+  double unit; // factor for imperial/metric conversion
+
+  unit = vm["metric"].as<bool>() ? (1. / 25.4) : 1;
+
+  //---------------------------------------------------------------------------
+  // prepare environment:
+
+  const bool ymirror = vm["mirror-yaxis"].as<bool>();
+  const double tolerance = vm["tolerance"].as<double>() * unit;
+  const bool explicit_tolerance = !vm["nog64"].as<bool>();
+  const string outputdir = vm["output-dir"].as<string>();
+  const double spindown_time =
+      vm.count("spindown-time")
+          ? vm["spindown-time"].as<Time>().asMillisecond(1)
+          : vm["spinup-time"].as<Time>().asMillisecond(1);
+  shared_ptr<Isolator> isolator;
+
+  if (vm.count("front") || vm.count("back")) {
+    isolator = make_shared<Isolator>();
+    for (const auto &tool_diameter : flatten(
+             vm["mill-diameters"].as<std::vector<CommaSeparated<Length>>>())) {
+      isolator->tool_diameters_and_overlap_widths.push_back(std::make_pair(
+          tool_diameter.asInch(unit),
+          boost::apply_visitor(
+              percent_visitor(tool_diameter),
+              vm["milling-overlap"].as<boost::variant<Length, Percent>>())
+              .asInch(unit)));
+    }
+    isolator->voronoi = vm["voronoi"].as<bool>();
+    isolator->feed = vm["mill-feed"].as<Velocity>().asInchPerMinute(unit);
+    if (vm.count("mill-vertfeed"))
+      isolator->vertfeed =
+          vm["mill-vertfeed"].as<Velocity>().asInchPerMinute(unit);
+    else
+      isolator->vertfeed = isolator->feed / 2;
+    isolator->speed = vm["mill-speed"].as<Rpm>().asRpm(1);
+    isolator->extra_passes = vm["extra-passes"].as<int>();
+    isolator->isolation_width = vm["isolation-width"].as<Length>().asInch(unit);
+    isolator->optimise = vm["optimise"].as<Length>().asInch(unit);
+    isolator->offset = vm["offset"].as<Length>().asInch(unit);
+    isolator->preserve_thermal_reliefs =
+        vm["preserve-thermal-reliefs"].as<bool>();
+    isolator->eulerian_paths = vm["eulerian-paths"].as<bool>();
+    isolator->path_finding_limit = vm["path-finding-limit"].as<size_t>();
+    isolator->g0_vertical_speed =
+        vm["g0-vertical-speed"].as<Velocity>().asInchPerMinute(unit);
+    isolator->g0_horizontal_speed =
+        vm["g0-horizontal-speed"].as<Velocity>().asInchPerMinute(unit);
+    isolator->backtrack = vm["backtrack"].as<Velocity>().asInchPerMinute(unit);
+    if (vm.count("mill-infeed")) {
+      isolator->stepsize = vm["mill-infeed"].as<Length>().asInch(unit);
+    } else {
+      isolator->stepsize = -isolator->zwork;
+    }
+    isolator->tolerance = tolerance;
+    isolator->explicit_tolerance = explicit_tolerance;
+    isolator->pre_milling_gcode = boost::algorithm::join(
+        vm["pre-milling-gcode"].as<vector<string>>(), "\n");
+    isolator->post_milling_gcode = boost::algorithm::join(
+        vm["post-milling-gcode"].as<vector<string>>(), "\n");
+    isolator->spinup_time = vm["spinup-time"].as<Time>().asMillisecond(1);
+    isolator->spindown_time = spindown_time;
+  }
+
+  auto cutter = make_shared<Cutter>();
+
+  if (vm.count("outline") ||
+      (vm.count("drill") &&
+       vm["min-milldrill-hole-diameter"].as<Length>() <
+           Length(std::numeric_limits<double>::infinity()))) {
+    cutter->tool_diameter = vm["cutter-diameter"].as<Length>().asInch(unit);
+    cutter->zwork = vm["zcut"].as<Length>().asInch(unit);
+    cutter->zsafe = vm["zsafe"].as<Length>().asInch(unit);
+    cutter->feed = vm["cut-feed"].as<Velocity>().asInchPerMinute(unit);
+    if (vm.count("cut-vertfeed"))
+      cutter->vertfeed =
+          vm["cut-vertfeed"].as<Velocity>().asInchPerMinute(unit);
+    else
+      cutter->vertfeed = cutter->feed / 2;
+    cutter->speed = vm["cut-speed"].as<Rpm>().asRpm(1);
+    cutter->zchange = vm["zchange"].as<Length>().asInch(unit);
+    cutter->stepsize = vm["cut-infeed"].as<Length>().asInch(unit);
+    cutter->optimise = vm["optimise"].as<Length>().asInch(unit);
+    cutter->offset = vm["offset"].as<Length>().asInch(unit);
+    cutter->eulerian_paths = vm["eulerian-paths"].as<bool>();
+    cutter->path_finding_limit = vm["path-finding-limit"].as<size_t>();
+    cutter->g0_vertical_speed =
+        vm["g0-vertical-speed"].as<Velocity>().asInchPerMinute(unit);
+    cutter->g0_horizontal_speed =
+        vm["g0-horizontal-speed"].as<Velocity>().asInchPerMinute(unit);
+    cutter->tolerance = tolerance;
+    cutter->explicit_tolerance = explicit_tolerance;
+    cutter->spinup_time = vm["spinup-time"].as<Time>().asMillisecond(1);
+    cutter->spindown_time = spindown_time;
+    cutter->bridges_num = vm["bridgesnum"].as<unsigned int>();
+    cutter->bridges_width = vm["bridges"].as<Length>().asInch(unit);
+    if (vm.count("zbridges"))
+      cutter->bridges_height = vm["zbridges"].as<Length>().asInch(unit);
+    else
+      cutter->bridges_height = cutter->zsafe;
+  }
+
+  //---------------------------------------------------------------------------
+  // prepare custom preamble:
+
+  string preamble, postamble;
+
+  if (vm.count("preamble-text")) {
+    cout << "Importing preamble text... " << flush;
+    string name = vm["preamble-text"].as<string>();
+    fstream in(name.c_str(), fstream::in);
+
+    if (!in.good()) {
+      options::maybe_throw("Cannot read preamble-text file \"" + name + "\"",
+                           ERR_INVALIDPARAMETER);
+    }
+
+    string line;
+    string tmp;
+
+    while (std::getline(in, line)) {
+      tmp = line;
+      boost::erase_all(tmp, " ");
+      boost::erase_all(tmp, "\t");
+
+      if (tmp.empty()) // If there's nothing but spaces and \t
+        preamble += '\n';
+      else {
+        boost::replace_all(
+            line, "(",
+            "<"); // Substitute round parenthesis with angled parenthesis
+        boost::replace_all(line, ")", ">");
+        preamble += "( " + line + " )\n";
+      }
+    }
+
+    cout << "DONE\n";
+  }
+
+  if (vm.count("preamble")) {
+    cout << "Importing preamble... " << flush;
+    string name = vm["preamble"].as<string>();
+    fstream in(name.c_str(), fstream::in);
+
+    if (!in.good()) {
+      options::maybe_throw("Cannot read preamble file \"" + name + "\"",
+                           ERR_INVALIDPARAMETER);
+    }
+
+    string tmp((std::istreambuf_iterator<char>(in)),
+               std::istreambuf_iterator<char>());
+    preamble += tmp + "\n";
+    cout << "DONE\n";
+  }
+
+  //---------------------------------------------------------------------------
+  // prepare custom postamble:
+
+  if (vm.count("postamble")) {
+    cout << "Importing postamble... " << flush;
+    string name = vm["postamble"].as<string>();
+    fstream in(name.c_str(), fstream::in);
+
+    if (!in.good()) {
+      options::maybe_throw("Cannot read postamble file \"" + name + "\"",
+                           ERR_INVALIDPARAMETER);
+    }
+
+    string tmp((std::istreambuf_iterator<char>(in)),
+               std::istreambuf_iterator<char>());
+    postamble = tmp + "\n";
+    cout << "DONE\n";
+  }
+
+  //---------------------------------------------------------------------------
+
+  auto board = make_shared<Board>(
+      vm["fill-outline"].as<bool>(), outputdir, vm["tsp-2opt"].as<bool>(),
+      vm["mill-feed-direction"].as<MillFeedDirection::MillFeedDirection>(),
+      vm["invert-gerbers"].as<bool>(), !vm["draw-gerber-lines"].as<bool>());
+
+  // this is currently disabled, use --outline instead
+  if (vm.count("margins")) {
+    board->set_margins(vm["margins"].as<double>());
+  }
+
+  //--------------------------------------------------------------------------
+  // load files, import layer files, create surface:
+
+  cout << "Importing front side... " << flush;
+  if (vm.count("front") > 0) {
+    string frontfile = vm["front"].as<string>();
+    auto importer = make_shared<GerberImporter>(tolerance);
+    if (!importer->load_file(frontfile)) {
+      options::maybe_throw("ERROR.", ERR_INVALIDPARAMETER);
+    }
+    board->prepareLayer("front", importer, isolator, false, ymirror);
+    cout << "DONE.\n";
+  } else {
+    cout << "not specified.\n";
+  }
+
+  cout << "Importing back side... " << flush;
+  if (vm.count("back") > 0) {
+    string backfile = vm["back"].as<string>();
+    auto importer = make_shared<GerberImporter>(tolerance);
+    if (!importer->load_file(backfile)) {
+      options::maybe_throw("ERROR.", ERR_INVALIDPARAMETER);
+    }
+    board->prepareLayer("back", importer, isolator, true, ymirror);
+    cout << "DONE.\n";
+  } else {
+    cout << "not specified.\n";
+  }
+
+  cout << "Importing outline... " << flush;
+  if (vm.count("outline") > 0) {
+    string outline = vm["outline"].as<string>();
+    auto importer = make_shared<GerberImporter>(tolerance);
+    if (!importer->load_file(outline)) {
+      options::maybe_throw("ERROR.", ERR_INVALIDPARAMETER);
+    }
+    board->prepareLayer("outline", importer, cutter, !workSide(vm, "cut"),
+                        ymirror);
+    cout << "DONE.\n";
+  } else {
+    cout << "not specified.\n";
+  }
+
+  cout << "Processing input files... " << flush;
+  board->createLayers();
+  cout << "DONE.\n";
+
+  if (!vm["no-export"].as<bool>()) {
+    auto exporter = make_shared<NGC_Exporter>(board);
+    exporter->add_header(PACKAGE_STRING);
+
+    if (vm.count("preamble") || vm.count("preamble-text")) {
+      exporter->set_preamble(preamble);
+    }
+
+    if (vm.count("postamble")) {
+      exporter->set_postamble(postamble);
+    }
+
+    exporter->export_all(vm);
+  }
+
+  cout << "Todo bien" << endl;
+}
+
+int main(int argc, const char *argv[]) {
+  try {
+    do_pcb2gcode(argc, argv);
+  } catch (const pcb2gcode_parse_exception &e) {
+    cerr << e.what() << endl;
+    return e.code();
+  } catch (const std::exception &e) {
+    // Catch these and return more gracefully so that coverage works
+    // better.
+    cerr << e.what() << endl;
+    return EXIT_FAILURE;
+  }
+  return 0;
+}

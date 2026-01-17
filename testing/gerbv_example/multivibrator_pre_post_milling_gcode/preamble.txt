@@ -1,3 +1,0 @@
-preamble line1
-preamble line2
-preamble line3
